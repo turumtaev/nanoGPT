@@ -26,15 +26,16 @@
 - [ ] Validate `build_attn_mask` correctness (unit test or toy check).
 
 ## Losses & Logging
-- [ ] Aggregate per-layer losses (mean or weighted sum) for backprop.
-- [ ] Log per-layer losses.
-- [ ] Log an "inference-simulated" loss: for each token, use the first confident layer’s logits (or last layer if none confident).
+- [x] Aggregate per-layer losses (mean or weighted sum) for backprop.
+- [x] Log per-layer losses.
+- [x] Log an "inference-simulated" loss: for each token, use the first confident layer’s logits (or last layer if none confident).
 
 ## Code Changes (Mapping)
 - [x] `GPTConfig`: add `confidence_threshold`, `confidence_mode`, `layer_supervision`.
 - [x] `GPT`: add per-layer heads and per-layer value embeddings.
 - [ ] `GPT.forward`: return per-layer logits and losses; implement masking & confidence.
-- [ ] `train.py`: handle new outputs and logging.
+- [x] `GPT.forward`: return per-layer logits and losses; implement masking & confidence.
+- [x] `train.py`: handle new outputs and logging.
 
 ## Validation
 - [ ] Shape checks (forward pass, per-layer logits).

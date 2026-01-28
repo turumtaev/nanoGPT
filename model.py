@@ -185,6 +185,7 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
         layer_logits = []
         per_layer_losses = []
+        layer_confidences = []
         attn_mask = None
         any_confident = None
 
@@ -212,6 +213,8 @@ class GPT(nn.Module):
             x_norm = self.transformer.ln_f(x)
             logits = self.layer_heads[i](x_norm)
             layer_logits.append(logits)
+            conf = compute_confidence(logits)
+            layer_confidences.append(conf)
 
             if targets is not None:
                 if self.config.layer_supervision == "skip_easy" and any_confident is not None:
@@ -239,7 +242,6 @@ class GPT(nn.Module):
                 per_layer_losses.append(loss_i)
 
             if i < len(self.transformer.h) - 1:
-                conf = compute_confidence(logits)
                 conf_mask = (conf >= self.config.confidence_threshold) & (targets != -1 if targets is not None else True)
                 attn_mask = build_attn_mask(conf_mask)
                 if self.config.layer_supervision == "skip_easy":
@@ -251,12 +253,34 @@ class GPT(nn.Module):
                 raise ValueError(f"Unknown layer_supervision: {self.config.layer_supervision}")
             loss = sum(per_layer_losses) / len(per_layer_losses)
             logits = layer_logits[-1]
+            logits_stack = torch.stack(layer_logits, dim=0)
+            conf_stack = torch.stack(layer_confidences, dim=0)
+            conf_mask = conf_stack >= self.config.confidence_threshold
+            conf_any = conf_mask.any(dim=0)
+            chosen = conf_mask.float().argmax(dim=0)
+            fallback = torch.full((b, t), conf_mask.size(0) - 1, device=conf_mask.device, dtype=torch.long)
+            chosen = torch.where(conf_any, chosen, fallback)
+            gather_idx = chosen.unsqueeze(0).unsqueeze(-1).expand(1, b, t, logits_stack.size(-1))
+            chosen_logits = torch.gather(logits_stack, 0, gather_idx).squeeze(0)
+            inference_loss = F.cross_entropy(
+                chosen_logits.view(-1, chosen_logits.size(-1)),
+                targets.view(-1),
+                ignore_index=-1,
+            )
         else:
             # inference-time mini-optimization: only forward the last layer head on the very last position
             logits = layer_logits[-1][:, [-1], :] # note: using list [-1] to preserve the time dim
             loss = None
+            inference_loss = None
 
-        return logits, loss
+        aux = None
+        if targets is not None:
+            aux = {
+                "per_layer_losses": per_layer_losses,
+                "inference_loss": inference_loss,
+            }
+
+        return logits, loss, aux
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
@@ -379,7 +403,7 @@ class GPT(nn.Module):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
-            logits, _ = self(idx_cond)
+            logits, _loss, _aux = self(idx_cond)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature
             # optionally crop the logits to only the top k options

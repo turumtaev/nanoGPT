@@ -54,6 +54,9 @@ n_head = 12
 n_embd = 768
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
+confidence_threshold = 0.9
+confidence_mode = 'max' # 'max' or 'gold'
+layer_supervision = 'all' # 'all' or 'skip_easy'
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
 max_iters = 600000 # total number of training iterations
@@ -218,12 +221,16 @@ def estimate_loss():
     model.eval()
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
+        infer_losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
-                logits, loss = model(X, Y)
+                logits, loss, aux = model(X, Y)
             losses[k] = loss.item()
+            if aux is not None and aux.get("inference_loss") is not None:
+                infer_losses[k] = aux["inference_loss"].item()
         out[split] = losses.mean()
+        out[f"{split}_infer"] = infer_losses.mean()
     model.train()
     return out
 
@@ -262,12 +269,14 @@ while True:
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
-        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, train infer {losses['train_infer']:.4f}, val infer {losses['val_infer']:.4f}")
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
                 "train/loss": losses['train'],
                 "val/loss": losses['val'],
+                "train/infer_loss": losses['train_infer'],
+                "val/infer_loss": losses['val_infer'],
                 "lr": lr,
                 "mfu": running_mfu*100, # convert to percentage
             })
@@ -297,7 +306,7 @@ while True:
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
         with ctx:
-            logits, loss = model(X, Y)
+            logits, loss, aux = model(X, Y)
             loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
         X, Y = get_batch('train')
@@ -324,7 +333,13 @@ while True:
         if local_iter_num >= 5: # let the training loop settle a bit
             mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
             running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
-        print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
+            if aux is not None:
+                infer_lossf = aux["inference_loss"].item()
+                layer_losses = [l.item() for l in aux["per_layer_losses"]]
+                layer_loss_str = ", ".join(f"{i}:{v:.4f}" for i, v in enumerate(layer_losses))
+                print(f"iter {iter_num}: loss {lossf:.4f}, infer {infer_lossf:.4f}, layers [{layer_loss_str}], time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
+            else:
+                print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
     iter_num += 1
     local_iter_num += 1
 

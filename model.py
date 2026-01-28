@@ -127,19 +127,17 @@ class GPT(nn.Module):
         self.config = config
 
         self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config.vocab_size, config.n_embd),
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
         ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # with weight tying when using torch.compile() some warnings get generated:
-        # "UserWarning: functional_call was passed multiple values for tied weights.
-        # This behavior is deprecated and will be an error in future versions"
-        # not 100% sure what this is, so far seems to be harmless. TODO investigate
-        self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
-
+        self.value_embs = nn.ModuleList([
+            nn.Embedding(config.vocab_size, config.n_embd) for _ in range(config.n_layer)
+        ])
+        self.layer_heads = nn.ModuleList([
+            nn.Linear(config.n_embd, config.vocab_size, bias=False) for _ in range(config.n_layer)
+        ])
         # init all weights
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
@@ -154,8 +152,6 @@ class GPT(nn.Module):
         """
         Return the number of parameters in the model.
         For non-embedding count (default), the position embeddings get subtracted.
-        The token embeddings would too, except due to the parameter sharing these
-        params are actually used as weights in the final layer, so we include them.
         """
         n_params = sum(p.numel() for p in self.parameters())
         if non_embedding:
@@ -177,20 +173,34 @@ class GPT(nn.Module):
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        tok_emb = self.value_embs[0](idx) # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
-        for block in self.transformer.h:
+        layer_logits = []
+        for i, block in enumerate(self.transformer.h):
+            if i > 0:
+                x = x + self.value_embs[i](idx)
             x = block(x)
-        x = self.transformer.ln_f(x)
+            x_norm = self.transformer.ln_f(x)
+            layer_logits.append(self.layer_heads[i](x_norm))
 
         if targets is not None:
             # if we are given some desired targets also calculate the loss
-            logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            per_layer_losses = []
+            for logits in layer_logits:
+                per_layer_losses.append(
+                    F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+                )
+            if self.config.layer_supervision == "all":
+                loss = sum(per_layer_losses) / len(per_layer_losses)
+            elif self.config.layer_supervision == "skip_easy":
+                raise NotImplementedError("layer_supervision='skip_easy' requires confidence masking; not implemented yet.")
+            else:
+                raise ValueError(f"Unknown layer_supervision: {self.config.layer_supervision}")
+            logits = layer_logits[-1]
         else:
-            # inference-time mini-optimization: only forward the lm_head on the very last position
-            logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
+            # inference-time mini-optimization: only forward the last layer head on the very last position
+            logits = layer_logits[-1][:, [-1], :] # note: using list [-1] to preserve the time dim
             loss = None
 
         return logits, loss

@@ -31,7 +31,7 @@
 
 ## Code Changes (Mapping)
 - [x] `GPTConfig`: add `confidence_threshold`, `confidence_mode`, `layer_supervision`.
-- [ ] `GPT`: add per-layer heads and per-layer value embeddings.
+- [x] `GPT`: add per-layer heads and per-layer value embeddings.
 - [ ] `GPT.forward`: return per-layer logits and losses; implement masking & confidence.
 - [ ] `train.py`: handle new outputs and logging.
 

@@ -12,17 +12,18 @@
 - [ ] Define how value embeddings are injected: add to hidden before each block `l` (except first), i.e. `h_l = Block_l(h_{l-1} + E_val^l[x_t])`.
 
 ## Forward Pass Behavior
-- [ ] Compute per-layer logits after each block.
-- [ ] Compute per-layer confidence per position based on config:
+- [x] Compute per-layer logits after each block.
+- [x] Compute per-layer confidence per position based on config:
   - `confidence_mode = "max"` (max softmax prob) OR
   - `confidence_mode = "gold"` (softmax prob of ground-truth token).
 - [ ] Implement inference early-exit: for each position, stop at first layer with confidence ≥ `tau`.
 
 ## Training-Time Masking (Context Skip)
-- [ ] For layer `l+1`, remove from context any positions where layer `l` is confident (per chosen confidence mode).
-- [ ] Keep predicting all tokens at all layers, but allow configurable loss handling:
+- [x] For layer `l+1`, remove from context any positions where layer `l` is confident (per chosen confidence mode).
+- [x] Keep predicting all tokens at all layers, but allow configurable loss handling:
   - `layer_supervision = "all"` (loss at every layer for every token) OR
   - `layer_supervision = "skip_easy"` (skip loss where earlier layer was confident).
+- [ ] Validate `build_attn_mask` correctness (unit test or toy check).
 
 ## Losses & Logging
 - [ ] Aggregate per-layer losses (mean or weighted sum) for backprop.
@@ -39,3 +40,4 @@
 - [ ] Shape checks (forward pass, per-layer logits).
 - [ ] Tiny overfit run on `shakespeare_char` with local CPU settings.
 - [ ] Toy masking sanity check with a short string (e.g. "WORLD").
+- [ ] Consider adding unit tests for masking logic.

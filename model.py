@@ -49,7 +49,7 @@ class CausalSelfAttention(nn.Module):
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                         .view(1, 1, config.block_size, config.block_size))
 
-    def forward(self, x):
+    def forward(self, x, attn_mask=None):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -61,11 +61,18 @@ class CausalSelfAttention(nn.Module):
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+            y = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=attn_mask,
+                dropout_p=self.dropout if self.training else 0,
+                is_causal=True,
+            )
         else:
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
             att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+            if attn_mask is not None:
+                att = att.masked_fill(attn_mask, float('-inf'))
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
@@ -100,8 +107,8 @@ class Block(nn.Module):
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x, attn_mask=None):
+        x = x + self.attn(self.ln_1(x), attn_mask=attn_mask)
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -177,26 +184,72 @@ class GPT(nn.Module):
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
         layer_logits = []
+        per_layer_losses = []
+        attn_mask = None
+        any_confident = None
+
+        def compute_confidence(logits):
+            if self.config.confidence_mode == "max" or (self.config.confidence_mode == "gold" and targets is None):
+                log_probs = F.log_softmax(logits, dim=-1)
+                return log_probs.max(dim=-1).values.exp()
+            if self.config.confidence_mode == "gold":
+                log_probs = F.log_softmax(logits, dim=-1)
+                safe_targets = targets.clamp_min(0)
+                gathered = log_probs.gather(-1, safe_targets.unsqueeze(-1)).squeeze(-1)
+                conf = gathered.exp()
+                conf = conf.masked_fill(targets == -1, 0.0)
+                return conf
+            raise ValueError(f"Unknown confidence_mode: {self.config.confidence_mode}")
+
+        def build_attn_mask(conf_mask):
+            # conf_mask: (B, T) bool, mask confident positions as keys
+            return conf_mask[:, None, None, :]  # (B,1,1,T)
+
         for i, block in enumerate(self.transformer.h):
             if i > 0:
                 x = x + self.value_embs[i](idx)
-            x = block(x)
+            x = block(x, attn_mask=attn_mask)
             x_norm = self.transformer.ln_f(x)
-            layer_logits.append(self.layer_heads[i](x_norm))
+            logits = self.layer_heads[i](x_norm)
+            layer_logits.append(logits)
+
+            if targets is not None:
+                if self.config.layer_supervision == "skip_easy" and any_confident is not None:
+                    loss_mask = ~any_confident
+                else:
+                    loss_mask = None
+                if loss_mask is not None:
+                    valid = (targets != -1) & loss_mask
+                    if valid.any():
+                        loss_i = F.cross_entropy(
+                            logits.view(-1, logits.size(-1)),
+                            targets.view(-1),
+                            ignore_index=-1,
+                            reduction="none",
+                        ).view(b, t)
+                        loss_i = loss_i.masked_select(valid).mean()
+                    else:
+                        loss_i = logits.new_tensor(0.0)
+                else:
+                    loss_i = F.cross_entropy(
+                        logits.view(-1, logits.size(-1)),
+                        targets.view(-1),
+                        ignore_index=-1,
+                    )
+                per_layer_losses.append(loss_i)
+
+            if i < len(self.transformer.h) - 1:
+                conf = compute_confidence(logits)
+                conf_mask = (conf >= self.config.confidence_threshold) & (targets != -1 if targets is not None else True)
+                attn_mask = build_attn_mask(conf_mask)
+                if self.config.layer_supervision == "skip_easy":
+                    any_confident = conf_mask if any_confident is None else (any_confident | conf_mask)
 
         if targets is not None:
             # if we are given some desired targets also calculate the loss
-            per_layer_losses = []
-            for logits in layer_logits:
-                per_layer_losses.append(
-                    F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
-                )
-            if self.config.layer_supervision == "all":
-                loss = sum(per_layer_losses) / len(per_layer_losses)
-            elif self.config.layer_supervision == "skip_easy":
-                raise NotImplementedError("layer_supervision='skip_easy' requires confidence masking; not implemented yet.")
-            else:
+            if self.config.layer_supervision not in {"all", "skip_easy"}:
                 raise ValueError(f"Unknown layer_supervision: {self.config.layer_supervision}")
+            loss = sum(per_layer_losses) / len(per_layer_losses)
             logits = layer_logits[-1]
         else:
             # inference-time mini-optimization: only forward the last layer head on the very last position

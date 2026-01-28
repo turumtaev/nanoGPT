@@ -222,6 +222,9 @@ def estimate_loss():
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
         infer_losses = torch.zeros(eval_iters)
+        total_tokens = 0
+        exit_counts = None
+        exit_correct_counts = None
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
@@ -229,8 +232,18 @@ def estimate_loss():
             losses[k] = loss.item()
             if aux is not None and aux.get("inference_loss") is not None:
                 infer_losses[k] = aux["inference_loss"].item()
+                total_tokens += int(aux["total_tokens"])
+                if exit_counts is None:
+                    exit_counts = aux["exit_counts"].clone()
+                    exit_correct_counts = aux["exit_correct_counts"].clone()
+                else:
+                    exit_counts += aux["exit_counts"]
+                    exit_correct_counts += aux["exit_correct_counts"]
         out[split] = losses.mean()
         out[f"{split}_infer"] = infer_losses.mean()
+        if total_tokens > 0 and exit_counts is not None:
+            out[f"{split}_exit_rates"] = (exit_counts / total_tokens).tolist()
+            out[f"{split}_exit_correct_rates"] = (exit_correct_counts / total_tokens).tolist()
     model.train()
     return out
 
@@ -270,6 +283,13 @@ while True:
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, train infer {losses['train_infer']:.4f}, val infer {losses['val_infer']:.4f}")
+        if "train_exit_rates" in losses:
+            train_exit = ", ".join(f"{i}:{v:.3f}" for i, v in enumerate(losses["train_exit_rates"]))
+            val_exit = ", ".join(f"{i}:{v:.3f}" for i, v in enumerate(losses["val_exit_rates"]))
+            train_exit_correct = ", ".join(f"{i}:{v:.3f}" for i, v in enumerate(losses["train_exit_correct_rates"]))
+            val_exit_correct = ", ".join(f"{i}:{v:.3f}" for i, v in enumerate(losses["val_exit_correct_rates"]))
+            print(f"step {iter_num}: train exit rates [{train_exit}], val exit rates [{val_exit}]")
+            print(f"step {iter_num}: train exit correct [{train_exit_correct}], val exit correct [{val_exit_correct}]")
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
@@ -280,6 +300,15 @@ while True:
                 "lr": lr,
                 "mfu": running_mfu*100, # convert to percentage
             })
+            if "train_exit_rates" in losses:
+                for i, v in enumerate(losses["train_exit_rates"]):
+                    wandb.log({f"train/exit_rate_{i}": v})
+                for i, v in enumerate(losses["val_exit_rates"]):
+                    wandb.log({f"val/exit_rate_{i}": v})
+                for i, v in enumerate(losses["train_exit_correct_rates"]):
+                    wandb.log({f"train/exit_correct_rate_{i}": v})
+                for i, v in enumerate(losses["val_exit_correct_rates"]):
+                    wandb.log({f"val/exit_correct_rate_{i}": v})
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
             if iter_num > 0:

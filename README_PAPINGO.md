@@ -1,0 +1,147 @@
+# Papingo (nanoGPT fork) — Concept & MVP Notes
+
+This repo contains an experimental model variant called **Papingo**. It keeps a nanoGPT‑style Transformer backbone but changes how prediction is supervised and how layers can “early‑exit” during inference.
+
+The MVP currently targets **character‑level Shakespeare** (same dataset as `data/shakespeare_char`), with configurable vocab size. The goal is to explore whether a multi‑layer prediction scheme with early exits can match vanilla nanoGPT quality while potentially reducing compute at inference.
+
+---
+
+## Core Idea
+
+Papingo introduces two main changes:
+
+1) **Per‑layer prediction heads**
+Each Transformer block has its own classifier head that predicts the next token (byte/char). So every layer tries to predict the next token.
+
+2) **Early exit by confidence**
+At inference, for each position, you can stop at the **first layer** whose prediction is confident enough (e.g., max probability ≥ `threshold`). If no layer is confident, use the last layer.
+
+To approximate this at training time, we mask the context in deeper layers when earlier layers were confident, simulating what would happen if inference exited early and those tokens were no longer processed by deeper layers.
+
+---
+
+## Formal Spec (MVP)
+
+### Tokens
+- **MVP uses characters**, not bytes, for simplicity (`shakespeare_char`).
+- `vocab_size` is configurable.
+
+### Model
+- Standard GPT‑style Transformer blocks.
+- Learned token embedding **per layer** (value embeddings), one table per layer.
+- One classifier head per layer.
+
+### Value embeddings
+For position `t` and layer `ℓ`:
+- Each layer has its own `E_val^(ℓ)`.
+- All layers look up the **same token id** `x_t` at that position.
+- Layer input:
+
+```
+h_0,t = Block_0( E_val^(0)[x_t] + pos_emb[t] )
+
+h_{ℓ,t} = Block_ℓ( h_{ℓ-1,t} + E_val^(ℓ)[x_t] )   for ℓ > 0
+```
+
+### Per‑layer prediction
+Each layer outputs logits:
+```
+logits_ℓ,t = head_ℓ( LN(h_{ℓ,t}) )
+```
+
+### Early exit (inference)
+For a threshold `τ`:
+- At each position `t`, find the first layer `ℓ` with confidence ≥ `τ`.
+- Use that layer’s prediction.
+- If no layer is confident, use the last layer.
+
+Confidence can be defined in two modes:
+- `max`: `max softmax probability`
+- `gold`: `softmax probability of the ground‑truth token` (training‑only)
+
+---
+
+## Training‑time Context Masking
+
+To simulate early exit at training:
+
+- Compute per‑layer confidence per position.
+- For layer `ℓ+1`, **mask out** any positions where layer `ℓ` is confident, so those tokens are **not part of the context** for deeper layers.
+
+This matches the intended inference behavior where confident tokens “stop” and are not processed further.
+
+---
+
+## Losses
+
+Papingo supports configurable supervision:
+
+- `layer_supervision = "all"`
+  - Compute loss at every layer for all positions.
+  - Total loss = mean of per‑layer losses.
+
+- `layer_supervision = "skip_easy"` (planned)
+  - Do not backprop loss on tokens already handled by earlier confident layers.
+
+Additionally, a **simulation loss** can be reported:
+- For each token, choose the earliest confident layer and compute loss from that layer’s logits (or last layer if none).
+
+---
+
+## Differences from vanilla nanoGPT
+
+- No shared token embedding / output head tying.
+- One embedding table per layer (value embedding).
+- One classifier head per layer.
+- Optional early‑exit logic based on confidence.
+- Masking of context for deeper layers to match early‑exit behavior.
+
+---
+
+## Current Status (MVP)
+
+Implemented:
+- Per‑layer value embeddings.
+- Per‑layer heads.
+- Confidence‑based context masking between layers.
+- Inference‑simulated loss logging.
+
+Still TODO / under discussion:
+- Confidence/exit‑rate metrics (how many tokens exit at each layer).
+- `layer_supervision = "skip_easy"` option.
+- Tests for masking correctness.
+
+See `PAPINGO_TODO.md` for the detailed checklist.
+
+---
+
+## Example CPU run (Shakespeare Char)
+
+```
+python data/shakespeare_char/prepare.py
+
+python train.py \
+  --dataset=shakespeare_char \
+  --device=cpu \
+  --compile=False \
+  --eval_interval=200 \
+  --eval_iters=20 \
+  --log_interval=10 \
+  --batch_size=12 \
+  --block_size=128 \
+  --n_layer=4 \
+  --n_head=4 \
+  --n_embd=128 \
+  --max_iters=2000 \
+  --confidence_threshold=0.9 \
+  --confidence_mode=max \
+  --layer_supervision=all
+```
+
+---
+
+## Notes
+
+- `confidence_mode=gold` should only be used when targets are provided.
+- Larger `block_size` tends to reduce loss; compare to vanilla nanoGPT using the same config for fair comparisons.
+

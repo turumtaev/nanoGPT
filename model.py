@@ -186,6 +186,8 @@ class GPT(nn.Module):
         layer_logits = []
         per_layer_losses = []
         layer_confidences = []
+        layer_max_probs = []
+        layer_preds = []
         attn_mask = None
         any_confident = None
 
@@ -213,6 +215,10 @@ class GPT(nn.Module):
             x_norm = self.transformer.ln_f(x)
             logits = self.layer_heads[i](x_norm)
             layer_logits.append(logits)
+            log_probs = F.log_softmax(logits, dim=-1)
+            max_logp, preds = log_probs.max(dim=-1)
+            layer_max_probs.append(max_logp.exp())
+            layer_preds.append(preds)
             conf = compute_confidence(logits)
             layer_confidences.append(conf)
 
@@ -275,9 +281,47 @@ class GPT(nn.Module):
 
         aux = None
         if targets is not None:
+            # Valid tokens exclude ignore_index positions.
+            valid = targets != -1
+            # Total tokens used for exit-rate normalization.
+            total_tokens = valid.sum()
+            # Stack max probabilities and argmax predictions per layer.
+            max_prob_stack = torch.stack(layer_max_probs, dim=0)
+            # Stack per-layer argmax predictions for correctness checks.
+            pred_stack = torch.stack(layer_preds, dim=0)
+            # Mask where max-prob exceeds threshold per layer.
+            max_conf_mask = max_prob_stack >= self.config.confidence_threshold
+            # Tokens with any confident layer.
+            max_conf_any = max_conf_mask.any(dim=0)
+            # Earliest confident layer index per token (argmax over layer dimension).
+            max_chosen = max_conf_mask.float().argmax(dim=0)
+            # Fallback to last layer when no layer is confident.
+            max_fallback = torch.full((b, t), max_conf_mask.size(0) - 1, device=max_conf_mask.device, dtype=torch.long)
+            # Apply fallback where no confident layer exists.
+            max_chosen = torch.where(max_conf_any, max_chosen, max_fallback)
+            # Chosen layer predictions for each token.
+            chosen_preds = torch.gather(pred_stack, 0, max_chosen.unsqueeze(0)).squeeze(0)
+            # Flatten chosen layer indices for valid tokens.
+            chosen_flat = max_chosen[valid].view(-1)
+            # Per-layer exit counts (sum equals total_tokens).
+            exit_counts = torch.bincount(chosen_flat, minlength=max_conf_mask.size(0))
+            # Correct predictions at chosen exit layer.
+            correct = (chosen_preds == targets) & valid
+            # Flatten chosen layer indices for correct tokens.
+            correct_flat = max_chosen[correct].view(-1)
+            # Per-layer correct exit counts.
+            exit_correct_counts = torch.bincount(correct_flat, minlength=max_conf_mask.size(0))
             aux = {
+                # Per-layer training losses (same order as layers).
                 "per_layer_losses": per_layer_losses,
+                # Inference-simulated loss using earliest confident layer.
                 "inference_loss": inference_loss,
+                # Total number of valid tokens.
+                "total_tokens": total_tokens,
+                # Per-layer exit counts (earliest confident layer).
+                "exit_counts": exit_counts,
+                # Per-layer correct exit counts.
+                "exit_correct_counts": exit_correct_counts,
             }
 
         return logits, loss, aux

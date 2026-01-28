@@ -29,6 +29,7 @@
 - [x] Aggregate per-layer losses (mean or weighted sum) for backprop.
 - [x] Log per-layer losses.
 - [x] Log an "inference-simulated" loss: for each token, use the first confident layer’s logits (or last layer if none confident).
+- [x] Log per-layer exit rates and exit-correct rates (based on max p threshold).
 
 ## Code Changes (Mapping)
 - [x] `GPTConfig`: add `confidence_threshold`, `confidence_mode`, `layer_supervision`.

@@ -9,6 +9,7 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 
 import math
 import inspect
+from typing import Optional, List
 from dataclasses import dataclass
 
 import torch
@@ -28,18 +29,19 @@ class LayerNorm(nn.Module):
 
 class CausalSelfAttention(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config, n_embd=None):
         super().__init__()
-        assert config.n_embd % config.n_head == 0
+        self.n_embd = config.n_embd if n_embd is None else n_embd
+        assert self.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.c_attn = nn.Linear(self.n_embd, 3 * self.n_embd, bias=config.bias)
         # output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=config.bias)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head
-        self.n_embd = config.n_embd
+        self.n_embd = self.n_embd
         self.dropout = config.dropout
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
@@ -84,11 +86,12 @@ class CausalSelfAttention(nn.Module):
 
 class MLP(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config, n_embd=None):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        n_embd = config.n_embd if n_embd is None else n_embd
+        self.c_fc    = nn.Linear(n_embd, 4 * n_embd, bias=config.bias)
         self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj  = nn.Linear(4 * n_embd, n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
@@ -100,12 +103,13 @@ class MLP(nn.Module):
 
 class Block(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config, n_embd=None):
         super().__init__()
-        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = CausalSelfAttention(config)
-        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.mlp = MLP(config)
+        n_embd = config.n_embd if n_embd is None else n_embd
+        self.ln_1 = LayerNorm(n_embd, bias=config.bias)
+        self.attn = CausalSelfAttention(config, n_embd=n_embd)
+        self.ln_2 = LayerNorm(n_embd, bias=config.bias)
+        self.mlp = MLP(config, n_embd=n_embd)
 
     def forward(self, x, attn_mask=None):
         x = x + self.attn(self.ln_1(x), attn_mask=attn_mask)
@@ -125,6 +129,7 @@ class GPTConfig:
     confidence_mode: str = "max" # "max" or "gold"
     layer_supervision: str = "all" # "all" or "skip_easy"
     detach_between_layers: bool = False
+    layer_widths: Optional[List[int]] = None
 
 class GPT(nn.Module):
 
@@ -134,17 +139,29 @@ class GPT(nn.Module):
         assert config.block_size is not None
         self.config = config
 
+        if config.layer_widths is None:
+            layer_widths = [config.n_embd] * config.n_layer
+        else:
+            layer_widths = list(config.layer_widths)
+            assert len(layer_widths) == config.n_layer, "layer_widths must match n_layer"
+            assert layer_widths[-1] == config.n_embd, "last layer width must equal n_embd"
+            assert all(layer_widths[i] <= layer_widths[i+1] for i in range(len(layer_widths)-1)), \
+                "layer_widths must be non-decreasing"
+        for w in layer_widths:
+            assert w % config.n_head == 0, "layer width must be divisible by n_head"
+        self.layer_widths = layer_widths
+
         self.transformer = nn.ModuleDict(dict(
-            wpe = nn.Embedding(config.block_size, config.n_embd),
+            wpe = nn.Embedding(config.block_size, layer_widths[0]),
             drop = nn.Dropout(config.dropout),
-            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = LayerNorm(config.n_embd, bias=config.bias),
+            h = nn.ModuleList([Block(config, n_embd=layer_widths[i]) for i in range(config.n_layer)]),
+            ln_f = nn.ModuleList([LayerNorm(layer_widths[i], bias=config.bias) for i in range(config.n_layer)]),
         ))
         self.value_embs = nn.ModuleList([
-            nn.Embedding(config.vocab_size, config.n_embd) for _ in range(config.n_layer)
+            nn.Embedding(config.vocab_size, layer_widths[i]) for i in range(config.n_layer)
         ])
         self.layer_heads = nn.ModuleList([
-            nn.Linear(config.n_embd, config.vocab_size, bias=False) for _ in range(config.n_layer)
+            nn.Linear(layer_widths[i], config.vocab_size, bias=False) for i in range(config.n_layer)
         ])
         # init all weights
         self.apply(self._init_weights)
@@ -180,6 +197,12 @@ class GPT(nn.Module):
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
+        def pad_to_width(x, width):
+            if x.size(-1) == width:
+                return x
+            assert x.size(-1) < width, "layer_widths must be non-decreasing"
+            return F.pad(x, (0, width - x.size(-1)))
+
         # forward the GPT model itself
         tok_emb = self.value_embs[0](idx) # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
@@ -211,9 +234,10 @@ class GPT(nn.Module):
 
         for i, block in enumerate(self.transformer.h):
             if i > 0:
+                x = pad_to_width(x, self.layer_widths[i])
                 x = x + self.value_embs[i](idx)
             x = block(x, attn_mask=attn_mask)
-            x_norm = self.transformer.ln_f(x)
+            x_norm = self.transformer.ln_f[i](x)
             logits = self.layer_heads[i](x_norm)
             layer_logits.append(logits)
             log_probs = F.log_softmax(logits, dim=-1)

@@ -49,6 +49,23 @@ Each layer outputs logits:
 logits_ℓ,t = head_ℓ( LN(h_{ℓ,t}) )
 ```
 
+### Variable layer widths (optional)
+You can make earlier layers “smaller” via `layer_widths`, while keeping the last layer at `n_embd`.
+Widths must be **non‑decreasing** and divisible by `n_head`.
+
+Example for 4 layers:
+```
+layer_widths = [64, 128, 256, 256]  # last width == n_embd
+```
+
+CLI example:
+```
+--layer_widths='[64,128,256,256]'
+```
+
+When moving from a smaller layer to a larger one, Papingo **pads** the hidden state with zeros
+so that `h_{ℓ-1}` matches the next layer width before adding `E_val^(ℓ)`.
+
 ### Early exit (inference)
 For a threshold `τ`:
 - At each position `t`, find the first layer `ℓ` with confidence ≥ `τ`.
@@ -145,7 +162,8 @@ python train.py \
   --confidence_threshold=0.9 \
   --confidence_mode=max \
   --layer_supervision=all \
-  --detach_between_layers=False
+  --detach_between_layers=False \
+  --layer_widths=None
 ```
 
 ---

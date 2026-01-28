@@ -153,12 +153,13 @@ class GPT(nn.Module):
             assert w % config.n_head == 0, "layer width must be divisible by n_head"
         self.layer_widths = layer_widths
         if config.layer_contexts is None:
-            layer_contexts = [config.block_size] * config.n_layer
+            layer_contexts = None
         else:
             layer_contexts = list(config.layer_contexts)
             assert len(layer_contexts) == config.n_layer, "layer_contexts must match n_layer"
-        for w in layer_contexts:
-            assert w >= 0 and w <= config.block_size, "layer_contexts must be in [0, block_size]"
+        if layer_contexts is not None:
+            for w in layer_contexts:
+                assert w >= 0 and w <= config.block_size, "layer_contexts must be in [0, block_size]"
         self.layer_contexts = layer_contexts
 
         self.transformer = nn.ModuleDict(dict(
@@ -258,7 +259,7 @@ class GPT(nn.Module):
             return conf_mask[:, None, None, :]  # (B,1,1,T)
 
         for i, block in enumerate(self.transformer.h):
-            window_mask = build_window_mask(self.layer_contexts[i])
+            window_mask = None if self.layer_contexts is None else build_window_mask(self.layer_contexts[i])
             if window_mask is not None:
                 window_mask = window_mask[None, None, :, :]  # (1,1,T,T)
             if attn_mask is None:

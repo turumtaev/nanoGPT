@@ -17,6 +17,7 @@
   - `confidence_mode = "max"` (max softmax prob) OR
   - `confidence_mode = "gold"` (softmax prob of ground-truth token).
 - [ ] Implement inference early-exit: for each position, stop at first layer with confidence ≥ `tau`.
+- [x] Add `detach_between_layers` option to stop gradients from later layers flowing into earlier blocks.
 
 ## Training-Time Masking (Context Skip)
 - [x] For layer `l+1`, remove from context any positions where layer `l` is confident (per chosen confidence mode).

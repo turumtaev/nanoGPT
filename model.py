@@ -124,6 +124,7 @@ class GPTConfig:
     confidence_threshold: float = 0.9
     confidence_mode: str = "max" # "max" or "gold"
     layer_supervision: str = "all" # "all" or "skip_easy"
+    detach_between_layers: bool = False
 
 class GPT(nn.Module):
 
@@ -252,6 +253,9 @@ class GPT(nn.Module):
                 attn_mask = build_attn_mask(conf_mask)
                 if self.config.layer_supervision == "skip_easy":
                     any_confident = conf_mask if any_confident is None else (any_confident | conf_mask)
+            if self.config.detach_between_layers and i < len(self.transformer.h) - 1:
+                # prevent later layers from backpropagating into earlier blocks
+                x = x.detach()
 
         if targets is not None:
             # if we are given some desired targets also calculate the loss

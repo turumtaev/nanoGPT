@@ -86,6 +86,15 @@ Papingo supports configurable supervision:
 Additionally, a **simulation loss** can be reported:
 - For each token, choose the earliest confident layer and compute loss from that layer’s logits (or last layer if none).
 
+### Optional gradient detachment between layers
+You can stop gradients from later layers flowing into earlier layers by setting:
+
+```
+detach_between_layers = True
+```
+
+This makes each layer optimize its own classifier head more independently. The next layer still consumes `h_ℓ`, but does not backprop into the previous block. This is expected to increase early‑exit rates for shallow layers.
+
 ---
 
 ## Differences from vanilla nanoGPT
@@ -135,7 +144,8 @@ python train.py \
   --max_iters=2000 \
   --confidence_threshold=0.9 \
   --confidence_mode=max \
-  --layer_supervision=all
+  --layer_supervision=all \
+  --detach_between_layers=False
 ```
 
 ---
@@ -144,4 +154,3 @@ python train.py \
 
 - `confidence_mode=gold` should only be used when targets are provided.
 - Larger `block_size` tends to reduce loss; compare to vanilla nanoGPT using the same config for fair comparisons.
-

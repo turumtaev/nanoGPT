@@ -295,8 +295,11 @@ while True:
             val_exit = ", ".join(f"{i}:{v:.3f}" for i, v in enumerate(losses["val_exit_rates"]))
             train_exit_correct = ", ".join(f"{i}:{v:.3f}" for i, v in enumerate(losses["train_exit_correct_rates"]))
             val_exit_correct = ", ".join(f"{i}:{v:.3f}" for i, v in enumerate(losses["val_exit_correct_rates"]))
+            train_acc = sum(losses["train_exit_correct_rates"])
+            val_acc = sum(losses["val_exit_correct_rates"])
             print(f"step {iter_num}: train exit rates [{train_exit}], val exit rates [{val_exit}]")
             print(f"step {iter_num}: train exit correct [{train_exit_correct}], val exit correct [{val_exit_correct}]")
+            print(f"step {iter_num}: train acc {train_acc:.3f}, val acc {val_acc:.3f}")
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
@@ -304,6 +307,8 @@ while True:
                 "val/loss": losses['val'],
                 "train/infer_loss": losses['train_infer'],
                 "val/infer_loss": losses['val_infer'],
+                "train/acc": (sum(losses["train_exit_correct_rates"]) if "train_exit_correct_rates" in losses else 0.0),
+                "val/acc": (sum(losses["val_exit_correct_rates"]) if "val_exit_correct_rates" in losses else 0.0),
                 "lr": lr,
                 "mfu": running_mfu*100, # convert to percentage
             })

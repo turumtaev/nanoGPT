@@ -11,6 +11,7 @@
 - [ ] Add per-layer value embeddings: one `nn.Embedding(vocab_size, n_embd)` per block.
 - [ ] Define how value embeddings are injected: add to hidden before each block `l` (except first), i.e. `h_l = Block_l(h_{l-1} + E_val^l[x_t])`.
 - [x] Add `layer_widths` to allow smaller early layers (non-decreasing widths, last == n_embd).
+- [ ] Add gated value embeddings (`gate_mode=none|learned`).
 
 ## Forward Pass Behavior
 - [x] Compute per-layer logits after each block.
@@ -19,6 +20,7 @@
   - `confidence_mode = "gold"` (softmax prob of ground-truth token).
 - [ ] Implement inference early-exit: for each position, stop at first layer with confidence ≥ `tau`.
 - [x] Add `detach_between_layers` option to stop gradients from later layers flowing into earlier blocks.
+- [ ] Add per-layer context window (`layer_contexts`) to restrict attention by layer.
 
 ## Training-Time Masking (Context Skip)
 - [x] For layer `l+1`, remove from context any positions where layer `l` is confident (per chosen confidence mode).
@@ -32,6 +34,9 @@
 - [x] Log per-layer losses.
 - [x] Log an "inference-simulated" loss: for each token, use the first confident layer’s logits (or last layer if none confident).
 - [x] Log per-layer exit rates and exit-correct rates (based on max p threshold).
+
+## Evaluation
+- [ ] Add HellaSwag eval script for Papingo (adapt `hellaswag.py`).
 
 ## Code Changes (Mapping)
 - [x] `GPTConfig`: add `confidence_threshold`, `confidence_mode`, `layer_supervision`.

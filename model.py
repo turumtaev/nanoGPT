@@ -131,6 +131,7 @@ class GPTConfig:
     detach_between_layers: bool = False
     layer_widths: Optional[List[int]] = None
     gate_mode: str = "none" # "none" or "learned"
+    layer_contexts: Optional[List[int]] = None
 
 class GPT(nn.Module):
 
@@ -151,6 +152,14 @@ class GPT(nn.Module):
         for w in layer_widths:
             assert w % config.n_head == 0, "layer width must be divisible by n_head"
         self.layer_widths = layer_widths
+        if config.layer_contexts is None:
+            layer_contexts = [config.block_size] * config.n_layer
+        else:
+            layer_contexts = list(config.layer_contexts)
+            assert len(layer_contexts) == config.n_layer, "layer_contexts must match n_layer"
+        for w in layer_contexts:
+            assert w >= 0 and w <= config.block_size, "layer_contexts must be in [0, block_size]"
+        self.layer_contexts = layer_contexts
 
         self.transformer = nn.ModuleDict(dict(
             wpe = nn.Embedding(config.block_size, layer_widths[0]),
@@ -210,6 +219,14 @@ class GPT(nn.Module):
                 return x
             assert x.size(-1) < width, "layer_widths must be non-decreasing"
             return F.pad(x, (0, width - x.size(-1)))
+        def build_window_mask(window):
+            if window is None or window >= t - 1:
+                return None
+            idx = torch.arange(t, device=device)
+            q = idx[:, None]
+            k = idx[None, :]
+            # mask keys older than window for each query position
+            return (q - k) > window
 
         # forward the GPT model itself
         tok_emb = self.value_embs[0](idx) # token embeddings of shape (b, t, n_embd)
@@ -236,11 +253,20 @@ class GPT(nn.Module):
                 return conf
             raise ValueError(f"Unknown confidence_mode: {self.config.confidence_mode}")
 
-        def build_attn_mask(conf_mask):
+        def build_conf_mask(conf_mask):
             # conf_mask: (B, T) bool, mask confident positions as keys
             return conf_mask[:, None, None, :]  # (B,1,1,T)
 
         for i, block in enumerate(self.transformer.h):
+            window_mask = build_window_mask(self.layer_contexts[i])
+            if window_mask is not None:
+                window_mask = window_mask[None, None, :, :]  # (1,1,T,T)
+            if attn_mask is None:
+                layer_attn_mask = window_mask
+            elif window_mask is None:
+                layer_attn_mask = attn_mask
+            else:
+                layer_attn_mask = attn_mask | window_mask
             if i > 0:
                 if self.gate_mode == "learned":
                     gate = torch.sigmoid(self.gates[i-1](x))
@@ -249,7 +275,7 @@ class GPT(nn.Module):
                 else:
                     x = pad_to_width(x, self.layer_widths[i])
                     x = x + self.value_embs[i](idx)
-            x = block(x, attn_mask=attn_mask)
+            x = block(x, attn_mask=layer_attn_mask)
             x_norm = self.transformer.ln_f[i](x)
             logits = self.layer_heads[i](x_norm)
             layer_logits.append(logits)
@@ -287,7 +313,7 @@ class GPT(nn.Module):
 
             if i < len(self.transformer.h) - 1:
                 conf_mask = (conf >= self.config.confidence_threshold) & (targets != -1 if targets is not None else True)
-                attn_mask = build_attn_mask(conf_mask)
+                attn_mask = build_conf_mask(conf_mask)
                 if self.config.layer_supervision == "skip_easy":
                     any_confident = conf_mask if any_confident is None else (any_confident | conf_mask)
             if self.config.detach_between_layers and i < len(self.transformer.h) - 1:

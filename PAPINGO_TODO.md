@@ -20,7 +20,7 @@
   - `confidence_mode = "gold"` (softmax prob of ground-truth token).
 - [ ] Implement inference early-exit: for each position, stop at first layer with confidence ≥ `tau`.
 - [x] Add `detach_between_layers` option to stop gradients from later layers flowing into earlier blocks.
-- [ ] Add per-layer context window (`layer_contexts`) to restrict attention by layer.
+- [x] Add per-layer context window (`layer_contexts`) to restrict attention by layer.
 
 ## Training-Time Masking (Context Skip)
 - [x] For layer `l+1`, remove from context any positions where layer `l` is confident (per chosen confidence mode).

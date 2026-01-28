@@ -57,6 +57,7 @@ bias = False # do we use bias inside LayerNorm and Linear layers?
 detach_between_layers = False
 layer_widths = []
 gate_mode = "none"
+layer_contexts = []
 confidence_threshold = 0.9
 confidence_mode = 'max' # 'max' or 'gold'
 layer_supervision = 'all' # 'all' or 'skip_easy'
@@ -157,7 +158,8 @@ model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=bloc
                   layer_supervision=layer_supervision,
                   detach_between_layers=detach_between_layers,
                   layer_widths=(layer_widths if len(layer_widths) > 0 else None),
-                  gate_mode=gate_mode) # start with model_args from command line
+                  gate_mode=gate_mode,
+                  layer_contexts=(layer_contexts if len(layer_contexts) > 0 else None)) # start with model_args from command line
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")

@@ -76,6 +76,20 @@ CLI example:
 --gate_mode=learned
 ```
 
+### Per-layer context windows (optional)
+You can limit attention context length per layer with `layer_contexts`.
+Each value is the max number of previous tokens a layer can attend to.
+
+Example for 4 layers:
+```
+layer_contexts = [8, 16, 32, 64]
+```
+
+CLI example:
+```
+--layer_contexts='[8,16,32,64]'
+```
+
 When moving from a smaller layer to a larger one, Papingo **pads** the hidden state with zeros
 so that `h_{ℓ-1}` matches the next layer width before adding `E_val^(ℓ)`.
 
@@ -177,7 +191,8 @@ python train.py \
   --layer_supervision=all \
   --detach_between_layers=False \
   --layer_widths=None \
-  --gate_mode=none
+  --gate_mode=none \
+  --layer_contexts=None
 ```
 
 ---

@@ -63,6 +63,19 @@ CLI example:
 --layer_widths='[64,128,256,256]'
 ```
 
+### Gated value embeddings (optional)
+You can gate how much of the value embedding vs. previous hidden state to use:
+
+```
+gate_mode = "none"    # default, h = h + E_val
+gate_mode = "learned" # h = gate*E_val + (1-gate)*h, gate = sigmoid(W h)
+```
+
+CLI example:
+```
+--gate_mode=learned
+```
+
 When moving from a smaller layer to a larger one, Papingo **pads** the hidden state with zeros
 so that `h_{ℓ-1}` matches the next layer width before adding `E_val^(ℓ)`.
 
@@ -163,7 +176,8 @@ python train.py \
   --confidence_mode=max \
   --layer_supervision=all \
   --detach_between_layers=False \
-  --layer_widths=None
+  --layer_widths=None \
+  --gate_mode=none
 ```
 
 ---

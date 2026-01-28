@@ -130,6 +130,7 @@ class GPTConfig:
     layer_supervision: str = "all" # "all" or "skip_easy"
     detach_between_layers: bool = False
     layer_widths: Optional[List[int]] = None
+    gate_mode: str = "none" # "none" or "learned"
 
 class GPT(nn.Module):
 
@@ -163,6 +164,13 @@ class GPT(nn.Module):
         self.layer_heads = nn.ModuleList([
             nn.Linear(layer_widths[i], config.vocab_size, bias=False) for i in range(config.n_layer)
         ])
+        if config.gate_mode not in {"none", "learned"}:
+            raise ValueError(f"Unknown gate_mode: {config.gate_mode}")
+        self.gate_mode = config.gate_mode
+        if config.gate_mode == "learned":
+            self.gates = nn.ModuleList([
+                nn.Linear(layer_widths[i-1], 1, bias=True) for i in range(1, config.n_layer)
+            ])
         # init all weights
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
@@ -234,8 +242,13 @@ class GPT(nn.Module):
 
         for i, block in enumerate(self.transformer.h):
             if i > 0:
-                x = pad_to_width(x, self.layer_widths[i])
-                x = x + self.value_embs[i](idx)
+                if self.gate_mode == "learned":
+                    gate = torch.sigmoid(self.gates[i-1](x))
+                    x = pad_to_width(x, self.layer_widths[i])
+                    x = gate * self.value_embs[i](idx) + (1.0 - gate) * x
+                else:
+                    x = pad_to_width(x, self.layer_widths[i])
+                    x = x + self.value_embs[i](idx)
             x = block(x, attn_mask=attn_mask)
             x_norm = self.transformer.ln_f[i](x)
             logits = self.layer_heads[i](x_norm)

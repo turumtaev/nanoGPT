@@ -11,7 +11,7 @@
 - [ ] Add per-layer value embeddings: one `nn.Embedding(vocab_size, n_embd)` per block.
 - [ ] Define how value embeddings are injected: add to hidden before each block `l` (except first), i.e. `h_l = Block_l(h_{l-1} + E_val^l[x_t])`.
 - [x] Add `layer_widths` to allow smaller early layers (non-decreasing widths, last == n_embd).
-- [ ] Add gated value embeddings (`gate_mode=none|learned`).
+- [x] Add gated value embeddings (`gate_mode=none|learned`).
 
 ## Forward Pass Behavior
 - [x] Compute per-layer logits after each block.

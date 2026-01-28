@@ -114,6 +114,9 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    confidence_threshold: float = 0.9
+    confidence_mode: str = "max" # "max" or "gold"
+    layer_supervision: str = "all" # "all" or "skip_easy"
 
 class GPT(nn.Module):
 

@@ -30,7 +30,7 @@
 - [ ] Log an "inference-simulated" loss: for each token, use the first confident layer’s logits (or last layer if none confident).
 
 ## Code Changes (Mapping)
-- [x] `GPTConfig`: add `tau`, `confidence_mode`, `layer_supervision`.
+- [x] `GPTConfig`: add `confidence_threshold`, `confidence_mode`, `layer_supervision`.
 - [ ] `GPT`: add per-layer heads and per-layer value embeddings.
 - [ ] `GPT.forward`: return per-layer logits and losses; implement masking & confidence.
 - [ ] `train.py`: handle new outputs and logging.

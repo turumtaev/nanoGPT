@@ -67,7 +67,9 @@ class CausalSelfAttention(nn.Module):
                 # if we pass an attn_mask, we must disable is_causal and include causal mask ourselves
                 causal = torch.triu(torch.ones(T, T, device=x.device, dtype=torch.bool), diagonal=1)
                 causal = causal[None, None, :, :]  # (1,1,T,T)
-                full_mask = attn_mask | causal
+                # attn_mask/causal are "block" masks; SDPA expects True=allow, so invert.
+                full_block = attn_mask | causal
+                full_mask = ~full_block
                 y = torch.nn.functional.scaled_dot_product_attention(
                     q, k, v,
                     attn_mask=full_mask,

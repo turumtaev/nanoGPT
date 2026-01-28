@@ -63,12 +63,24 @@ class CausalSelfAttention(nn.Module):
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(
-                q, k, v,
-                attn_mask=attn_mask,
-                dropout_p=self.dropout if self.training else 0,
-                is_causal=True,
-            )
+            if attn_mask is not None:
+                # if we pass an attn_mask, we must disable is_causal and include causal mask ourselves
+                causal = torch.triu(torch.ones(T, T, device=x.device, dtype=torch.bool), diagonal=1)
+                causal = causal[None, None, :, :]  # (1,1,T,T)
+                full_mask = attn_mask | causal
+                y = torch.nn.functional.scaled_dot_product_attention(
+                    q, k, v,
+                    attn_mask=full_mask,
+                    dropout_p=self.dropout if self.training else 0,
+                    is_causal=False,
+                )
+            else:
+                y = torch.nn.functional.scaled_dot_product_attention(
+                    q, k, v,
+                    attn_mask=None,
+                    dropout_p=self.dropout if self.training else 0,
+                    is_causal=True,
+                )
         else:
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))

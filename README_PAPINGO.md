@@ -220,3 +220,21 @@ Config: `block_size=256`, `n_layer=6`, `n_head=6`, `n_embd=384`, `dropout=0.2`, 
 
 - `confidence_mode=gold` should only be used when targets are provided.
 - Larger `block_size` tends to reduce loss; compare to vanilla nanoGPT using the same config for fair comparisons.
+
+## Papingo Table (Per-Token Exit Visualization)
+
+Use `scripts/papingo_table.py` to render a per-token table that shows:
+- Ground-truth character
+- Which layer produced the exit prediction
+- Probabilities for ground-truth and predicted characters
+
+Example run (CPU checkpoint):
+```
+python scripts/papingo_table.py \
+  --ckpt papingo_cpu_mvp_right_config_max_all_0.9/ckpt.pt \
+  --num_chars 300 \
+  --sentences 2 \
+  --start_idx 0
+```
+
+Example output saved in `papingo_table_example.md`.

@@ -223,7 +223,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None, training: bool = False):
+    def forward(self, idx, targets=None, training: bool = False, return_layers: bool = False):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -405,6 +405,10 @@ class GPT(nn.Module):
                 # Per-layer correct exit counts.
                 "exit_correct_counts": exit_correct_counts,
             }
+        if return_layers:
+            if aux is None:
+                aux = {}
+            aux["layer_logits"] = layer_logits
 
         return logits, loss, aux
 

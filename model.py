@@ -223,7 +223,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, training: bool = False):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -256,16 +256,16 @@ class GPT(nn.Module):
         any_confident = None
 
         def compute_confidence(logits):
-            if self.config.confidence_mode == "max" or (self.config.confidence_mode == "gold" and targets is None):
-                log_probs = F.log_softmax(logits, dim=-1)
-                return log_probs.max(dim=-1).values.exp()
-            if self.config.confidence_mode == "gold":
+            if self.config.confidence_mode == "gold" and targets is not None and training:
                 log_probs = F.log_softmax(logits, dim=-1)
                 safe_targets = targets.clamp_min(0)
                 gathered = log_probs.gather(-1, safe_targets.unsqueeze(-1)).squeeze(-1)
                 conf = gathered.exp()
                 conf = conf.masked_fill(targets == -1, 0.0)
                 return conf
+            if self.config.confidence_mode in {"max", "gold"}:
+                log_probs = F.log_softmax(logits, dim=-1)
+                return log_probs.max(dim=-1).values.exp()
             raise ValueError(f"Unknown confidence_mode: {self.config.confidence_mode}")
 
         def build_conf_mask(conf_mask):

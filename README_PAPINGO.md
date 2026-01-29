@@ -201,10 +201,10 @@ python train.py \
 ### CPU (small config)
 Config: `block_size=64`, `n_layer=4`, `n_head=4`, `n_embd=128`, `confidence_mode=gold`, `confidence_threshold=0.6`, `layer_supervision=all`.
 
-- **val loss:** 1.8390  
-- **val infer:** 1.8482  
-- **val acc:** 0.437  
-- **val exit rates:** `[0:0.268, 1:0.031, 2:0.011, 3:0.690]`
+- **val loss:** 2.0180  
+- **val infer:** 1.8905  
+- **val acc:** 0.444  
+- **val exit rates:** `[0:0.268, 1:0.046, 2:0.016, 3:0.671]`
 
 ### GPU A100 (config/train_shakespeare_char.py)
 Config: `block_size=256`, `n_layer=6`, `n_head=6`, `n_embd=384`, `dropout=0.2`, `confidence_mode=gold`, `confidence_threshold=0.6`, `layer_supervision=all`.

@@ -158,10 +158,9 @@ Implemented:
 - Per‑layer heads.
 - Confidence‑based context masking between layers.
 - Inference‑simulated loss logging.
+- Exit‑rate metrics and overall accuracy logging.
 
 Still TODO / under discussion:
-- Confidence/exit‑rate metrics (how many tokens exit at each layer).
-- `layer_supervision = "skip_easy"` option.
 - Tests for masking correctness.
 
 See `PAPINGO_TODO.md` for the detailed checklist.
@@ -194,6 +193,26 @@ python train.py \
   --gate_mode=none \
   --layer_contexts=None
 ```
+
+---
+
+## Best Metrics So Far
+
+### CPU (small config)
+Config: `block_size=64`, `n_layer=4`, `n_head=4`, `n_embd=128`, `confidence_mode=gold`, `confidence_threshold=0.6`, `layer_supervision=all`.
+
+- **val loss:** 1.8390  
+- **val infer:** 1.8482  
+- **val acc:** 0.437  
+- **val exit rates:** `[0:0.268, 1:0.031, 2:0.011, 3:0.690]`
+
+### GPU A100 (config/train_shakespeare_char.py)
+Config: `block_size=256`, `n_layer=6`, `n_head=6`, `n_embd=384`, `dropout=0.2`, `confidence_mode=gold`, `confidence_threshold=0.6`, `layer_supervision=all`.
+
+- **val loss:** 1.3292  
+- **val infer:** 1.3155  
+- **val acc:** 0.556  
+- **val exit rates:** `[0:0.477, 1:0.109, 2:0.039, 3:0.016, 4:0.006, 5:0.353]`
 
 ---
 

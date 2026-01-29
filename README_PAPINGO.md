@@ -199,20 +199,20 @@ python train.py \
 ## Best Metrics So Far
 
 ### CPU (small config)
-Config: `block_size=64`, `n_layer=4`, `n_head=4`, `n_embd=128`, `confidence_mode=gold`, `confidence_threshold=0.6`, `layer_supervision=all`.
+Config: `block_size=64`, `n_layer=4`, `n_head=4`, `n_embd=128`, `confidence_mode=max`, `confidence_threshold=0.9`, `layer_supervision=all`.
 
-- **val loss:** 2.0180  
-- **val infer:** 1.8905  
-- **val acc:** 0.444  
-- **val exit rates:** `[0:0.268, 1:0.046, 2:0.016, 3:0.671]`
+- **val loss:** 1.8779  
+- **val infer:** 1.8633  
+- **val acc:** 0.447  
+- **val exit rates:** `[0:0.056, 1:0.023, 2:0.008, 3:0.913]`
 
 ### GPU A100 (config/train_shakespeare_char.py)
-Config: `block_size=256`, `n_layer=6`, `n_head=6`, `n_embd=384`, `dropout=0.2`, `confidence_mode=gold`, `confidence_threshold=0.6`, `layer_supervision=all`.
+Config: `block_size=256`, `n_layer=6`, `n_head=6`, `n_embd=384`, `dropout=0.2`, `confidence_mode=max`, `confidence_threshold=0.9`, `layer_supervision=all`.
 
-- **val loss:** 1.3292  
-- **val infer:** 1.3155  
-- **val acc:** 0.556  
-- **val exit rates:** `[0:0.477, 1:0.109, 2:0.039, 3:0.016, 4:0.006, 5:0.353]`
+- **val loss:** 1.5197  
+- **val infer:** 1.4947  
+- **val acc:** 0.571  
+- **val exit rates:** `[0:0.195, 1:0.105, 2:0.038, 3:0.017, 4:0.006, 5:0.640]`
 
 ---
 
